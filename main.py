@@ -4,7 +4,7 @@ import math
 
 from enum import StrEnum
 from typing import Optional, NamedTuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 CWD = os.getcwd()
 
@@ -34,65 +34,52 @@ income_tax_table = {
     "fith_band": Income_Tax_Range(4664.69, math.inf, 0.275, 896.00)
 }
 
-def inss_deduction(salary: float, inss_table: Inss_Table) -> float:
+def inss_deduction_calculation(gross_salary: float, inss_table: Inss_Table) -> float:
     aliquot_sum: float = 0.0
     for inss_range in inss_table.values():
-        if salary >= inss_range.final:
+        if gross_salary >= inss_range.final:
             aliquot_sum += (inss_range.final - inss_range.initial) * inss_range.aliquot
         else:
-            aliquot_sum += (salary - inss_range.initial) * inss_range.aliquot
+            aliquot_sum += (gross_salary - inss_range.initial) * inss_range.aliquot
     return aliquot_sum
 
-def income_tax_deduction(salary: float, income_tax_table: Income_Tax_Table, inss_deduction: float) -> float:
+def income_tax_deduction_calculation(gross_salary: float, income_tax_table: Income_Tax_Table, inss_deduction: float) -> float:
     income_tax_sum: float = 0.0
     for income_tax_range in income_tax_table.values():
-        if income_tax_range.initial <= salary and salary <= income_tax_range.final:
-            income_tax_sum = ((salary - inss_deduction) * income_tax_range.aliquot) - income_tax_range.monthly_deduction
+        if income_tax_range.initial <= gross_salary and gross_salary <= income_tax_range.final:
+            income_tax_sum = ((gross_salary - inss_deduction) * income_tax_range.aliquot) - income_tax_range.monthly_deduction
             break
     return income_tax_sum
 
 @dataclass
 class Static_Financial_Status:
-
-    @dataclass
-    class Planned_Work_Hours:
-        per_day: float
-        per_week: float
-        per_month: float
-        per_year: float
-
-    @dataclass
-    class Planned_Salary:
-        per_day: Optional[float] = None
-        per_week: Optional[float] = None
-        per_month: Optional[float] = None
-        per_year: Optional[float] = None
-
     latest: bool
     starting_date: ISO_Date_Format
     ending_date: ISO_Date_Format
-    income_tax_percentage: float
-    planned_work_hours: Planned_Work_Hours
-    planned_salary: Planned_Salary
+    gross_salary: float
+    net_salary: float = field(init=False)
+    inss_table: Inss_Table
+    inss_deduction: float = field(init=False)
+    income_tax_table: Income_Tax_Table
+    income_tax_deduction: float = field(init=False)
     salary_currency: Currency
-    inss_table: list[Inss_Table]
+    working_hours_per_day: float = field(repr=False)
 
-    def to_json(self) -> dict[str, ...]:
+    def __post_init__(self):
+        self.inss_deduction = inss_deduction_calculation(self.gross_salary, self.inss_table)
+        self.income_tax_deduction = income_tax_deduction_calculation(self.gross_salary, self.income_tax_table, self.inss_deduction)
+        self.net_salary = self.gross_salary - self.inss_deduction - self.income_tax_deduction
+
+    def to_json(self) -> dict[str, bool | str | float]:
         return {
             "latest": self.latest,
             "salary_currency": self.salary_currency.value,
             "starting_date": self.starting_date,
             "ending_date": self.ending_date,
-            "income_tax_percentage": self.income_tax_percentage,
-            "planned_work_hours": {
-                "per_day": self.planned_work_hours.per_day,
-                "per_week": self.planned_work_hours.per_week,
-                "per_month": self.planned_work_hours.per_month,
-                "per_year": self.planned_work_hours.per_year
-            },
-            "planned_salary": {
-                "per_month": self.planned_salary.per_month
-            }
+            "gross_salary": self.gross_salary,
+            "net_salary": self.net_salary,
+            "inss_deduction": self.inss_deduction,
+            "income_tax_deduction": self.income_tax_deduction
         }
 
 @dataclass
@@ -110,20 +97,13 @@ if __name__ == "__main__":
         latest=True,
         starting_date="2024-01-01",
         ending_date="2025-01-01",
-        income_tax_percentage=0.275,
+        gross_salary=10_000.0,
+        income_tax_table=income_tax_table,
         inss_table=inss_table,
-        planned_work_hours=Static_Financial_Status.Planned_Work_Hours(
-            per_day=10.0, per_week=40.0, per_month=160.0, per_year=1920
-        ),
-        planned_salary=Static_Financial_Status.Planned_Salary(
-            per_month=10000.0
-        ),
+        working_hours_per_day=8.0,
         salary_currency=Currency.Real
     )
 
     with open(filename_path, "w") as stream:
         json.dump(financial_status.to_json(), stream, indent=4)
 
-    salary = 10000
-    inss_deduction_val = inss_deduction(salary, inss_table)
-    print(inss_deduction_val, income_tax_deduction(salary, income_tax_table, inss_deduction_val))
